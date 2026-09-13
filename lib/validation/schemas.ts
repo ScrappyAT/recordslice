@@ -64,9 +64,52 @@ export const resendCodeSchema = z.object({
   email,
 });
 
+// amount is entered in major units ("12.34") as a string, not a number -
+// the input never becomes a float at any point before lib/money.ts converts
+// it with string/integer arithmetic. The regex itself is what rejects "not
+// a number" and "negative" (no minus sign is in the alphabet it accepts),
+// so there is no separate numeric range check needed here.
+const amount = z
+  .string()
+  .trim()
+  .regex(/^\d+(\.\d{1,2})?$/, "Enter an amount like 12.34, with up to two decimal places");
+
+// Uppercased before the shape check, same normalise-then-validate order as
+// the email schema above - "usd" and "USD" should not be different inputs
+// to the same currency.
+const currency = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, "Currency must be a 3-letter code, e.g. USD");
+
+export const invoiceCreateSchema = z.object({
+  invoiceNumber: z
+    .string()
+    .trim()
+    .min(1, "Invoice number is required")
+    .max(50, "Invoice number must be at most 50 characters"),
+  clientName: z
+    .string()
+    .trim()
+    .min(1, "Client name is required")
+    .max(200, "Client name must be at most 200 characters"),
+  amount,
+  currency,
+  // A calendar date from an <input type="date">, always "YYYY-MM-DD" - kept
+  // as a validated string here rather than z.coerce.date(), which would
+  // accept far more than the one format the form actually sends.
+  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter a valid date"),
+  // The exact three values the migration's CHECK constraint allows - this
+  // schema and that constraint have to be kept in step by hand, since a
+  // raw SQL CHECK and a zod enum share no single source of truth.
+  status: z.enum(["draft", "sent", "paid"], { message: "Choose a status" }),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type SigninInput = z.infer<typeof signinSchema>;
 export type ResetRequestInput = z.infer<typeof resetRequestSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type VerifyCodeInput = z.infer<typeof verifyCodeSchema>;
 export type ResendCodeInput = z.infer<typeof resendCodeSchema>;
+export type InvoiceCreateInput = z.infer<typeof invoiceCreateSchema>;
