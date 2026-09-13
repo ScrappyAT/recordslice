@@ -19,6 +19,7 @@ model User {
   sessions            Session[]
   verificationCodes   VerificationCode[]
   passwordResetTokens PasswordResetToken[]
+  invoices            Invoice[]
 }
 
 model Session {
@@ -66,4 +67,65 @@ model RateLimitHit {
   createdAt DateTime @default(now())
 
   @@index([key, createdAt])
+}
+
+model Invoice {
+  id            String   @id @default(cuid())
+  // The only identifier a client ever sees. Random hex generated in
+  // application code (see lib/auth/session.ts for the same primitive used
+  // on session tokens), never a database default. Lookups are always
+  // `where: { publicId, userId }`, never `publicId` alone.
+  publicId      String   @unique
+  userId        String
+  invoiceNumber String
+  // Integer minor units, currency stored alongside - never a float or a
+  // decimal type. Non-negative is enforced by a raw-SQL CHECK constraint
+  // in the migration; Prisma's schema language has no attribute for it.
+  amountMinor   Int
+  currency      String   @db.Char(3)
+  clientName    String
+  // A calendar date, not a moment - @db.Date avoids the timezone ambiguity
+  // a full timestamp would introduce for a field that means "the 14th."
+  issueDate     DateTime @db.Date
+  // Restricted to a fixed set by a raw-SQL CHECK constraint in the
+  // migration, not a Prisma enum - see the migration for the allowed
+  // values and why CHECK was chosen over a Postgres ENUM type.
+  status        String
+  createdAt     DateTime @default(now())
+
+  // Restrict, not Cascade: a cascade runs inside Postgres, outside any
+  // transaction application code controls, so a user delete would remove
+  // invoices without ever writing an InvoiceDeletion row - silently
+  // breaking the one guarantee that table exists to make. Nothing in this
+  // slice deletes users, so this costs nothing today and forecloses a
+  // silent gap if that ever changes. Session/VerificationCode/
+  // PasswordResetToken cascade deliberately - they carry no audit
+  // obligation, so losing them on user delete loses nothing.
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // One user cannot hold two invoices with the same number; two different
+  // users can, deliberately - a global unique constraint would leak the
+  // total invoice count across all users and forbid two accounts from
+  // both using "INV-001".
+  @@unique([userId, invoiceNumber])
+  // Backs the list query: `where: { userId } orderBy: { createdAt: desc }`.
+  // Its leading column also covers any plain userId filter, so a separate
+  // index on userId alone would be redundant.
+  @@index([userId, createdAt])
+}
+
+// No foreign key to Invoice - the invoice is gone by the time this row
+// exists, so every value it needs is denormalised here instead. No index
+// beyond the primary key: the only query against this table is one manual
+// look for a screenshot, on a table with a handful of rows - an index for
+// that would be exactly the speculative index AGENTS.MD forbids.
+model InvoiceDeletion {
+  id              String   @id @default(cuid())
+  invoicePublicId String
+  invoiceNumber   String
+  amountMinor     Int
+  currency        String   @db.Char(3)
+  clientName      String
+  userId          String
+  deletedAt       DateTime @default(now())
 }
