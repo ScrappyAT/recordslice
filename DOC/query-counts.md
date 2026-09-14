@@ -149,6 +149,8 @@ again after the fix specifically to confirm this stayed at 3, not to see it drop
 | Detail | `GET /invoices/:publicId` | 5 | 3 | 2 fewer (40%) |
 | Create (page load) | `GET /invoices/new` | 2 | 2 | none — never duplicated |
 | Create (write, "the create action") | `POST /api/invoices` | 3 | 3 | none — never duplicated |
+| Delete ("the delete action", successful) | `DELETE /api/invoices/:publicId` | — | 7 | built after the fix, no naive baseline |
+| Delete (rejected — wrong user/nonexistent/already gone) | `DELETE /api/invoices/:publicId` | — | 5 | built after the fix, no naive baseline |
 
 **The single change that accounted for the reduction is the `cache()` wrap on
 `getSession()`** — it's the only change made in step 7. It cut list and detail by 2
@@ -170,6 +172,43 @@ invoices, requests made with `curl` against real session cookies, `lib/prisma.ts
 diff --stat` confirmed no changes to that file at commit time). The same non-deterministic
 `SELECT 1` Prisma-internal statement was observed again on some requests and excluded
 from the counts, for the same reason as before.
+
+## Delete — `DELETE /api/invoices/:publicId`
+
+Measured in step 8, under the same method as list/detail/create above: production build
+(`next build` + `next start`), a freshly created verified user with one invoice, `curl`
+against a real session cookie, temporary `log: ["query"]` reverted before committing
+(confirmed via `git diff --stat`), the same non-deterministic Prisma-internal `SELECT 1`
+excluded. One thing this action has that the other three don't: a `$transaction`, which
+itself sends `BEGIN` and `COMMIT` as real, separate statements to Postgres — unlike the
+excluded `SELECT 1`, these are not incidental engine plumbing, they're a direct,
+deterministic consequence of this step's own `prisma.$transaction(...)` call, so they're
+counted, under their own classification, rather than excluded.
+
+**The successful delete — 7 statements:**
+
+| # | Query | What it's doing | Classification |
+|---|---|---|---|
+| 1 | `SELECT ... FROM "Session" ...` | The route's own `getSession()` | Auth infra |
+| 2 | `SELECT ... FROM "User" ...` | Same call's include | Auth infra |
+| 3 | `BEGIN` | Opens the transaction | Transaction control |
+| 4 | `SELECT ... FROM "Invoice" WHERE publicId = $1 AND userId = $2` | Reads the invoice's own values for the audit row | Action's own data query |
+| 5 | `DELETE FROM "Invoice" WHERE publicId = $1 AND userId = $2` | The scoped delete | Action's own data query |
+| 6 | `INSERT INTO "InvoiceDeletion" (...) VALUES (...) RETURNING ...` | The audit row, same transaction | Action's own data query |
+| 7 | `COMMIT` | Commits the transaction | Transaction control |
+
+**A rejected delete (wrong user, nonexistent, or already-deleted publicId) — 5
+statements:** the same #1, #2, #3, then the scoped read at #4 finds nothing and the
+transaction callback returns immediately, so #5 and #6 above never run, then `COMMIT`
+closes the (no-op) transaction. Confirmed identical for all three rejection cases.
+
+**Which count is "the delete action" for the documentation table: the successful path,
+7.** Same reasoning as counting create's POST rather than its GET — the number that
+matters is the cost of the action actually happening, not the cost of it being refused.
+
+A `GET` to this same path never reaches any of this — `app/api/invoices/[publicId]/route.ts`
+exports only `DELETE`, so Next.js answers `405 Method Not Allowed` before any Prisma call
+runs. Confirmed with `curl`: 0 queries logged for that request.
 
 ## Index verification (EXPLAIN)
 

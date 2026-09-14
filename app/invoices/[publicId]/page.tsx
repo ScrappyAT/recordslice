@@ -50,6 +50,12 @@ export default async function InvoiceDetailPage({
         <dt className="font-medium">Status</dt>
         <dd>{invoice.status}</dd>
       </dl>
+      <Link
+        href={`/invoices/${invoice.publicId}/delete`}
+        className="mt-4 inline-block underline"
+      >
+        Delete
+      </Link>
     </main>
   );
 }
