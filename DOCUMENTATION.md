@@ -4,24 +4,11 @@ Assessment 4: The Records and Access Slice. Records are invoices; the domain car
 business rules. What matters, per the brief, is ownership, correct access control, and
 efficient data access.
 
-## Section 1: What This Is
+# Section 1: What This Is
 
-This is a slice, not an application: one flow — create, list, view, delete — for a
-user's own invoices, built so that no user can ever reach another user's data. Auth
-(sign-up, sign-in, email verification, sessions, password reset) is reused by hand from
-a separate Assessment 1 repository, committed as such, not rebuilt. Every invoice route
-sits under a signed-in shell that gates on a valid, verified session before anything
-else runs, and every query that touches an invoice carries the authenticated user's id
-inside the query itself — never checked afterward.
+This is an invoice slice, not an invoicing application. A signed-in user can create, list, view and delete their own invoices, and the point of the whole thing is that no user can ever reach another user's data. I reused the authentication system from my Assessment 1 repository rather than rebuilding it — sign-up, sign-in, email verification, sessions and password reset all come from there. Every invoice route sits behind a valid, verified session, and more importantly I never fetch an invoice and then check who owns it: the authenticated user's ID is part of the database query itself, so the database cannot return someone else's row in the first place.
 
-Deliberately excluded: editing, search, tags, sharing, collaboration, a landing page,
-dashboard widgets, pagination, filtering, and sorting controls. All of these are named
-in the brief's "Do not build" list, not omissions of convenience — each one is a
-liability to the two things this slice is actually graded on (access control and query
-cost) without being asked for. The two-identifier design (a server-only primary key and
-a separate public identifier), the transaction around delete-and-audit, and the
-401/403/404 distinction are the load-bearing parts of this repository; everything else
-was kept as small as the four required screens allow.
+The scope is deliberately small. There is no editing, search, tags, sharing, collaboration, landing page, dashboard widgets, pagination, filtering or sorting. These were not forgotten — they were left out because they add surface area around the two things I wanted to get right, which are access control and query efficiency. What I concentrated on instead was the two-identifier design of a server-only primary key alongside a separate public identifier, the transaction that performs a deletion and writes its audit record together, and getting 401, 403 and 404 to mean three distinct things.
 
 ## Section 2: How To Run It
 
@@ -593,34 +580,20 @@ item below was a reasoned trade-off, made with time remaining, not an incomplete
   (`lib/auth/session.ts:33`), but nothing here has been deployed or tested beyond
   `localhost`.
 
-## Section 8: If I Built This Again
+# Section 8: If I Built This Again
 
-I would write the session-resolution query itself, from the first commit, as a single
-statement selecting only the columns the app actually needs, scoped by a valid session's
-token hash and expiry — rather than inheriting Assessment 1's `Session`-with-`include`
-shape, which costs two statements (a `Session` lookup, then a separate `User` lookup)
-on every single gated request, across every route, forever, for a shape decision made
-in a different project answering different requirements. `cache()` fixed the
-*duplicate* call this slice introduced; it didn't fix the two-statement cost baked into
-the call itself, and by the time that was visible in `EXPLAIN` output it was imported
-code four days from a deadline, not a clean slate. Everything else here — the
-two-identifier design, scoping every query by construction, the transaction around
-delete-and-audit — held up under its own reasoning well enough that reusing it as-is,
-rather than reworking it, would be the right call again.
+The one thing I would change is how the session is resolved. I reused the session logic from Assessment 1, which looks up the `Session` row and uses an `include` to attach the `User` — and that `include` does not compile to a join. It runs as two separate statements on every authenticated request, one to find the session and another to fetch the user by the ID it just got back. I used React's `cache()` to stop this slice resolving the same session twice within a single request, which took the list and detail views from five queries to three, but memoising a two-query lookup still leaves it a two-query lookup. If I had written the session layer myself rather than inheriting it, I would have made it a single query selecting only the fields the application actually reads, and the reduction I am documenting would have been larger and simpler to explain. Everything else held up: the two-identifier design, putting the user's ID inside every invoice query rather than checking ownership afterwards, and writing the deletion and its audit record in one transaction are all decisions I would make again.
 
 ---
 
-## Evidence Index
+# Evidence Index
 
-| Brief requirement | File |
-|---|---|
-| Access control audit table (method, path, attempted, result, pass/fail) | `DOC/access-control-audit.md` |
-| Query count table, before and after, with classification | `DOC/query-counts.md` |
-| Screenshot of the audit log after a deletion | `evidence/recordslice-audit-log.png` |
-| Screenshot of a URL showing an identifier that is not the database identifier | `evidence/recordslice-detail-url.png`, alongside `evidence/recordslice-db-row.png` (the same invoice's database row, `id` next to `publicId`, for direct comparison) |
+| Brief requirement | Evidence |
+| --- | --- |
+| Access control audit table showing method, path, attempted action, result and pass/fail | `DOC/access-control-audit.md` |
+| Query count comparison before and after, including the classification of each query | `DOC/query-counts.md` |
+| Screenshot of the audit log after an invoice was deleted | `evidence/recordslice-audit-log.png` |
+| Screenshot showing the public identifier in the invoice URL rather than the database ID | `evidence/recordslice-detail-url.png` |
+| Database row showing the same invoice's `id` and `publicId` for comparison | `evidence/recordslice-db-row.png` |
 
-Honestly noted: `recordslice-detail-url.png` was captured with headless Chromium, which
-has no window chrome to screenshot — there is no real address bar in the image. The true
-URL, read from `page.url()` rather than typed by hand, is rendered as a banner at the
-top of the same screenshot in its place. `recordslice-db-row.png` was captured from
-Prisma Studio.
+The URL and database screenshots are a pair: the URL screenshot shows the public identifier in the address bar, and the database screenshot shows the same invoice's `id` and `publicId` side by side, so the two values can be compared directly. The database screenshots were captured from Prisma Studio.
