@@ -355,20 +355,23 @@ checks `emailVerifiedAt` and calls `forbidden()`
 (`app/invoices/layout.tsx:21-22`) for page routes; the same check lives in
 `requireApiUser()` (`lib/auth/api.ts:21-23`) for the two API routes.
 
-**What I chose against and why.** State plainly: under the normal sign-in/verify flow,
-the `403` branch is unreachable — sign-in refuses an unverified account, and
-verification sets `emailVerifiedAt` in the same request that creates a session, so no
-real session should ever carry a `null` value there. I built and kept the check anyway
-rather than treat that as a reason to skip it, and that decision was validated
-concretely, not just theoretically: **before step 9, `POST /api/invoices` returned
-`201` and wrote a real invoice row for a deliberately constructed session with
-`emailVerifiedAt: null`**, because the 403 check lived only in
-`app/invoices/layout.tsx` and Route Handlers under `app/api/*` are never wrapped by a
-page layout at all — an entirely separate part of Next's routing tree. That is exactly
-why an "unreachable" check is worth having: the invariant that makes it unreachable
-lives in one file (the sign-in route), and the code depending on it lives in another
-(the shell) — the two can drift apart silently, and, for one route, did, until closed by
-`lib/auth/api.ts`.
+**What I decided not to use and why:**
+
+Leaving the verified-email check only in the page layout.
+
+That was my first implementation, and it looked sufficient: every page under
+`/invoices` is wrapped by `app/invoices/layout.tsx`, so every page was covered. What it
+missed is that Route Handlers under `app/api` are not wrapped by that layout at all.
+
+I found this by deliberately constructing a session with `emailVerifiedAt: null`, since
+the normal flow cannot produce one — sign-in refuses unverified accounts and
+verification sets the field in the same request. That session posted to `/api/invoices`
+and got back a `201` with a real invoice row written.
+
+So the check I had described as unreachable was not unreachable; it was simply absent
+from the half of the application that needed it most. The fix was `requireApiUser()` in
+`lib/auth/api.ts`, called by both handlers, so the rule lives in one place rather than
+depending on which part of the framework happens to wrap a route.
 
 ### Database indexing
 
@@ -417,6 +420,21 @@ query it exists for, the forced-plan test proves it isn't broken, and "unused by
 planner at this table size" is a completely different failure mode from "doesn't work" —
 removing it would leave nothing for the planner to prefer once the query's shape changes
 (a future `LIMIT`, a larger or differently skewed dataset).
+
+**What I decided not to use and why:**
+
+Dropping the composite index once I saw the planner ignoring it.
+
+It would have been the tidier-looking decision — an index nothing chooses looks like
+dead weight. But the plan I forced with `enable_bitmapscan = off` showed the index does
+exactly what it was designed to do: it eliminates the sort entirely. The planner's
+preference is a cost judgement about this table at this size with this query shape, not
+a verdict on the index. The moment a `LIMIT` is introduced, or the row distribution
+changes, the ordered index scan becomes the cheaper plan.
+
+I also chose against adding a `LIMIT` purely to make the planner pick the index I
+wanted. That would have been optimising the evidence rather than the query, and
+pagination is outside this brief.
 
 ### Query count as a cost
 
