@@ -1,19 +1,33 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth/session";
+import { requireApiUser } from "@/lib/auth/api";
 
 // Only DELETE is exported here. A GET, POST, or anything else to this same
 // path never reaches this file's logic at all - Next.js answers with 405
 // Method Not Allowed before any application code runs, so there is no
 // mutating code path a GET could accidentally trigger.
+//
+// That 405 carries an empty body (no Content-Type, no JSON, no explicit
+// Allow header) - decided deliberately, not left unnoticed. AGENTS.MD's
+// graded status-code distinction is 401 vs. 403 vs. 404; a 405's body
+// shape isn't part of it, and the access control audit (step 10) reads
+// the status code, not the body, for a wrong-method attempt. The
+// alternative - exporting a GET handler here just to shape a nicer error -
+// would trade a rejection Next.js guarantees structurally (there is no
+// code path for GET to reach at all) for one enforced by application code
+// that could itself have a bug. Left as-is.
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ publicId: string }> },
 ) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+  // Covers 401 (no session) and 403 (unverified email) in one place - see
+  // lib/auth/api.ts. This route is a Route Handler, never wrapped by the
+  // shell layout, so before this it had no 403 check at all.
+  const auth = await requireApiUser();
+  if (auth.response) {
+    return auth.response;
   }
+  const { session } = auth;
 
   const { publicId } = await params;
 

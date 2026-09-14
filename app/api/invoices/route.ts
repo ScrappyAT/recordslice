@@ -1,22 +1,27 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth/session";
+import { requireApiUser } from "@/lib/auth/api";
 import { invoiceCreateSchema } from "@/lib/validation/schemas";
 import { toMinorUnits } from "@/lib/money";
 import { generatePublicId } from "@/lib/ids";
 
+// Only POST is exported here - same 405-with-empty-body default as
+// app/api/invoices/[publicId]/route.ts for any other method, left for the
+// same reason documented there.
 export async function POST(request: Request) {
-  // getSession(), not requireSession(): this is a Route Handler, not a
+  // requireApiUser(), not requireSession(): this is a Route Handler, not a
   // page. requireSession() redirects, which is right for a browser
   // navigating the shell (app/invoices/layout.tsx) but wrong for a JSON
   // API - a Route Handler is not wrapped by that layout at all, so this is
-  // the only place this route is gated. Per AGENTS.MD, an API request with
-  // no valid session gets 401 as JSON, not a redirect.
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+  // the only place this route is gated. Covers both 401 (no session) and
+  // 403 (unverified email) - see lib/auth/api.ts for why this exists as
+  // its own function rather than the check being written out here again.
+  const auth = await requireApiUser();
+  if (auth.response) {
+    return auth.response;
   }
+  const { session } = auth;
 
   const body = await request.json().catch(() => null);
   if (body === null) {
