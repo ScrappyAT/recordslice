@@ -35,7 +35,7 @@ was kept as small as the four required screens allow.
 
 1. Clone the repository:
    ```
-   git clone [VERIFY: GitHub repository URL for recordslice]
+   git clone https://github.com/ScrappyAT/recordslice.git
    cd recordslice
    ```
 2. Install dependencies:
