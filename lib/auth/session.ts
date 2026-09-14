@@ -1,4 +1,5 @@
 import { randomBytes, createHash } from "crypto";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -36,7 +37,19 @@ export async function createSession(userId: string): Promise<void> {
   });
 }
 
-export async function getSession() {
+// Wrapped in React's cache() so every call within one request converges on
+// the same execution instead of re-running the lookup below. This was the
+// naive step 4/5 finding, measured in DOC/query-counts.md: the shell
+// layout calls requireSession() to gate the route, then the page calls it
+// again independently to get the user id its own query needs - two
+// identical database round trips per request for what is, within one
+// request, always the same answer. cache() is request-scoped and
+// per-render, not a cross-request or cross-user cache: a different
+// request (a different user, or the same user's next request) always
+// re-runs this. Reused verbatim from the same fix in a previous
+// assessment's Prisma app for the identical duplicate-session-lookup
+// problem, not something new for this one.
+export const getSession = cache(async () => {
   const cookieStore = await cookies();
   const rawToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (!rawToken) {
@@ -48,11 +61,15 @@ export async function getSession() {
   // Expiry is a condition on the lookup itself, not a check performed
   // afterward - an expired row simply doesn't come back, the same pattern
   // used for verification codes and (later) reset tokens.
+  //
+  // Still two statements, not one: the include below fetches Session then
+  // User separately and merges them in application code rather than a SQL
+  // join. See the step 7 report for why this is left alone.
   return prisma.session.findFirst({
     where: { tokenHash, expiresAt: { gt: new Date() } },
     include: { user: true },
   });
-}
+});
 
 export async function destroySession(): Promise<void> {
   const cookieStore = await cookies();
